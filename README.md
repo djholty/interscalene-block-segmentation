@@ -71,19 +71,16 @@ python process_medsam2.py \
     --device cuda
 ```
 
-#### Legacy Video Script
+#### Process Multiple Videos
 
-For video-only processing:
+To process all MP4 files in a directory:
 
 ```bash
-# Process all MP4 files in current directory
-python process_videos_with_medsam2.py
+# Process all supported files (including MP4) in a directory
+python process_medsam2.py -i . -o results --extensions .mp4
 
-# Process specific videos
-python process_videos_with_medsam2.py --videos MyFile_6.mp4 MyFile_7.mp4
-
-# Process every 5th frame, max 10 frames per video
-python process_videos_with_medsam2.py --frame_interval 5 --max_frames 10
+# Process all MP4 files recursively
+python process_medsam2.py -i video_folder/ -o results --extensions .mp4 --recursive
 ```
 
 ## Supported Formats
@@ -159,16 +156,25 @@ results = pipeline.process_directory(
 
 ```
 .
-├── medsam2_pipeline/          # Modular pipeline package
-│   ├── input_handlers.py      # Input format handlers
-│   ├── processor.py            # MedSAM2 processor
-│   └── pipeline.py             # Main pipeline
-├── MedSAM2/                   # MedSAM2 model code (cloned repository)
-├── process_medsam2.py          # Main script (modular, recommended)
-├── process_videos_with_medsam2.py  # Legacy video script
+├── src/                        # Source code directory
+│   ├── medsam2_pipeline/       # Modular pipeline package
+│   │   ├── __init__.py
+│   │   ├── input_handlers.py   # Input format handlers (MP4, DICOM, TIF)
+│   │   ├── processor.py        # MedSAM2 model processor
+│   │   └── pipeline.py         # Main pipeline orchestration
+│   └── process_medsam2.py      # Main processing script
 ├── tests/                      # Unit tests
-└── requirements.txt            # Dependencies
+│   └── test_pipeline.py
+├── MedSAM2/                    # MedSAM2 model code (cloned repository)
+├── process_medsam2.py          # Entry point script (calls src/process_medsam2.py)
+├── requirements.txt            # Python dependencies
+├── pyproject.toml              # Package configuration
+├── README.md                   # This file
+├── SETUP.md                    # Detailed installation guide
+└── TROUBLESHOOTING.md          # Troubleshooting guide
 ```
+
+**Note**: The entry point script in the root directory (`process_medsam2.py`) is a thin wrapper that calls the actual script in the `src/` directory. This keeps the codebase organized while maintaining an easy-to-use command-line interface.
 
 ## Requirements
 
@@ -182,7 +188,7 @@ See `requirements.txt` for complete list.
 
 ## Command Line Options
 
-### process_medsam2.py (Main Pipeline)
+### Command Line Options
 
 - `--input, -i`: Input file or directory (required)
 - `--output, -o`: Output directory (default: `medsam2_results`)
@@ -191,20 +197,10 @@ See `requirements.txt` for complete list.
 - `--frame_interval`: Process every Nth image (default: 1)
 - `--max_images`: Maximum images per file (default: all)
 - `--device`: Device to use (`cuda`, `mps`, `cpu`, or auto-detect)
-- `--extensions`: Specific file extensions to process
+- `--recursive`: Process files recursively in directories
+- `--extensions`: Specific file extensions to process (e.g., `--extensions .mp4 .avi`)
 - `--alpha`: Mask overlay transparency (0.0-1.0, default: 0.5)
 - `--mask_color`: Mask color in RGB (default: 0 255 0)
-
-### process_videos_with_medsam2.py (Legacy)
-
-- `--video_dir`: Directory containing MP4 files (default: current directory)
-- `--videos`: Specific video files to process
-- `--checkpoint`: Path to MedSAM2 checkpoint
-- `--config`: Path to MedSAM2 config (relative to sam2 package)
-- `--output_dir`: Directory to save results
-- `--frame_interval`: Process every Nth frame (default: 1)
-- `--max_frames`: Maximum frames per video (default: all)
-- `--device`: Device to use (`cuda`, `mps`, or `cpu`)
 
 ## Testing
 

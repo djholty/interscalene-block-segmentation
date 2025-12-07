@@ -12,12 +12,12 @@ hydra.errors.MissingConfigException: Cannot find primary config '.../sam2/config
 **Solution:**
 The config path should be relative to the `sam2` package, not an absolute path. Use:
 ```bash
-python process_videos_with_medsam2.py --config configs/sam2.1_hiera_t512.yaml
+python process_medsam2.py --config configs/sam2.1_hiera_t512.yaml -i video.mp4 -o results
 ```
 
 Not:
 ```bash
-python process_videos_with_medsam2.py --config MedSAM2/sam2/configs/sam2.1_hiera_t512.yaml
+python process_medsam2.py --config MedSAM2/sam2/configs/sam2.1_hiera_t512.yaml -i video.mp4 -o results
 ```
 
 Hydra searches for configs in `pkg://sam2`, so the path should be relative to that.

@@ -12,8 +12,8 @@ import pytest
 import numpy as np
 import cv2
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add src directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from medsam2_pipeline.input_handlers import (
     BaseInputHandler,
