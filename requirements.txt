@@ -1,0 +1,21 @@
+# Core dependencies for MedSAM2 video processing pipeline
+opencv-python>=4.8.0
+# Note: MedSAM2 will install NumPy 2.x, which should be compatible with OpenCV 4.11+
+matplotlib>=3.7.0
+tqdm>=4.65.0
+Pillow>=10.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Medical image format support
+pydicom>=2.4.0  # For DICOM files
+SimpleITK>=2.3.0  # For DICOM series and medical image processing
+tifffile>=2023.0.0  # For TIF/TIFF files (including multi-page)
+
+# MedSAM2 dependencies (install from MedSAM2 directory)
+# Run: cd MedSAM2 && pip install -e ".[dev]"
+
+# Testing (optional)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
