@@ -87,7 +87,22 @@ pip install -e ".[dev]"
 - Process videos one at a time
 - Reduce batch size in the code if processing multiple frames
 
-### 6. Import Errors
+### 6. MedSAM2 Folder is Empty
+
+**Error:**
+```
+FileNotFoundError: [Errno 2] No such file or directory: 'MedSAM2/...'
+ModuleNotFoundError: No module named 'sam2'
+```
+
+**Solution:**
+The MedSAM2 folder needs to be populated with the MedSAM2 repository:
+```bash
+git clone https://github.com/bowang-lab/MedSAM2.git MedSAM2
+cd MedSAM2 && pip install -e ".[dev]" && cd ..
+```
+
+### 7. Import Errors
 
 **Error:**
 ```
@@ -95,11 +110,12 @@ ModuleNotFoundError: No module named 'sam2'
 ```
 
 **Solution:**
-1. Make sure you're in the virtual environment: `source venv/bin/activate`
-2. Make sure MedSAM2 is installed: `cd MedSAM2 && pip install -e ".[dev]"`
-3. Check that the script adds MedSAM2 to the path correctly
+1. Make sure the MedSAM2 repository has been cloned (see issue #6 above)
+2. Make sure you're in the virtual environment: `source venv/bin/activate`
+3. Make sure MedSAM2 is installed: `cd MedSAM2 && pip install -e ".[dev]"`
+4. Check that the script adds MedSAM2 to the path correctly
 
-### 7. Video File Not Found
+### 8. Video File Not Found
 
 **Error:**
 ```
@@ -112,7 +128,7 @@ ValueError: Could not open video file: ...
 - Check file permissions
 - Ensure the video format is supported (MP4, AVI, MOV, etc.)
 
-### 8. Device Not Available
+### 9. Device Not Available
 
 **Error:**
 ```

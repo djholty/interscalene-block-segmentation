@@ -22,20 +22,26 @@ venv\Scripts\activate
 
 ## Install Dependencies
 
-### 1. Install Basic Requirements
+### 1. Clone MedSAM2 Repository
+```bash
+# If the MedSAM2 folder is empty or doesn't exist, clone the repository:
+git clone https://github.com/bowang-lab/MedSAM2.git MedSAM2
+```
+
+### 2. Install Basic Requirements
 ```bash
 # Make sure venv is activated (you should see (venv) in your prompt)
 pip install -r requirements.txt
 ```
 
-### 2. Install MedSAM2 Dependencies
+### 3. Install MedSAM2 Dependencies
 ```bash
 cd MedSAM2
 pip install -e ".[dev]"
 cd ..
 ```
 
-### 3. Download MedSAM2 Checkpoints
+### 4. Download MedSAM2 Checkpoints
 ```bash
 cd MedSAM2
 bash download.sh
@@ -73,9 +79,16 @@ For CUDA support, install PyTorch from the official site:
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
 
+### MedSAM2 Folder is Empty
+If the MedSAM2 folder is empty or missing:
+```bash
+git clone https://github.com/bowang-lab/MedSAM2.git MedSAM2
+```
+
 ### MedSAM2 Installation Issues
 If MedSAM2 installation fails:
-1. Make sure you're in the MedSAM2 directory
-2. Check that all system dependencies are installed (see MedSAM2/README.md)
-3. Try installing without dev dependencies: `pip install -e .`
+1. Make sure the MedSAM2 repository has been cloned (see above)
+2. Make sure you're in the MedSAM2 directory
+3. Check that all system dependencies are installed (see MedSAM2/README.md)
+4. Try installing without dev dependencies: `pip install -e .`
 
