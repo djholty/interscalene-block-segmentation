@@ -4,6 +4,7 @@ YOLOv8 testing and visualization script.
 This module provides:
 - Model evaluation on test dataset with metrics
 - Visualization of predictions on mask images from data_brachial_plexus
+- Grayscale->3ch conversion for inference (matching training pipeline)
 """
 
 import os
@@ -14,11 +15,83 @@ import numpy as np
 from PIL import Image
 import logging
 
+import torch
 from ultralytics import YOLO
 
-from .helpers import read_tif, draw_box_on_image
+from helpers import read_tif, draw_box_on_image
 
 logger = logging.getLogger(__name__)
+
+
+# -----------------------------
+# Grayscale -> 3ch conversion (must match training pipeline)
+# -----------------------------
+_CONVERT_LOGGED = {"val": False, "predict": False}
+
+
+def _to_3ch(img: torch.Tensor) -> torch.Tensor:
+    """Convert (B,1,H,W)->(B,3,H,W) by triplicating the channel. No-op if already 3ch."""
+    if not isinstance(img, torch.Tensor):
+        return img
+    if img.ndim == 4 and img.shape[1] == 1:
+        return img.repeat(1, 3, 1, 1)
+    if img.ndim == 3 and img.shape[0] == 1:
+        return img.repeat(3, 1, 1)
+    return img
+
+
+def _convert_batch_to_3ch(batch: dict, tag: str) -> dict:
+    """Convert batch['img'] from 1ch to 3ch by triplication if needed."""
+    if not isinstance(batch, dict) or "img" not in batch:
+        return batch
+    img = batch["img"]
+    new_img = _to_3ch(img)
+    if isinstance(img, torch.Tensor) and isinstance(new_img, torch.Tensor):
+        if img.shape != new_img.shape and not _CONVERT_LOGGED.get(tag, False):
+            logger.info(f"[{tag}] Converted grayscale -> 3ch: {tuple(img.shape)} -> {tuple(new_img.shape)}")
+            _CONVERT_LOGGED[tag] = True
+    batch["img"] = new_img
+    return batch
+
+
+def _patch_method(obj, method_name: str, tag: str) -> bool:
+    """Patch a preprocessing method to convert 1ch->3ch."""
+    if obj is None:
+        return False
+    
+    patch_flag = f"_grayscale_patched_{method_name}"
+    if getattr(obj, patch_flag, False):
+        return False
+    if not hasattr(obj, method_name):
+        return False
+    
+    original_method = getattr(obj, method_name)
+    
+    def patched_method(batch):
+        batch = original_method(batch)
+        return _convert_batch_to_3ch(batch, tag)
+    
+    setattr(obj, method_name, patched_method)
+    setattr(obj, patch_flag, True)
+    logger.debug(f"Patched {obj.__class__.__name__}.{method_name} for grayscale->3ch ({tag})")
+    return True
+
+
+def _on_val_start(validator):
+    """Patch validator's preprocess method at validation start."""
+    _patch_method(validator, "preprocess", "val")
+
+
+def _on_predict_start(predictor):
+    """Patch predictor's preprocess method at prediction start."""
+    _patch_method(predictor, "preprocess", "predict")
+
+
+def _register_grayscale_callbacks(model: YOLO) -> None:
+    """Register callbacks to patch preprocessing for grayscale->3ch conversion."""
+    model.add_callback("on_val_start", _on_val_start)
+    model.add_callback("on_predict_start", _on_predict_start)
+    logger.debug("Registered grayscale->3ch patching callbacks for inference.")
 
 
 def evaluate_model(
@@ -53,8 +126,9 @@ def evaluate_model(
     logger.info(f"IoU threshold: {iou}")
     logger.info("="*60)
     
-    # Load model
+    # Load model and register grayscale conversion callbacks
     model = YOLO(model_path)
+    _register_grayscale_callbacks(model)
     
     # Run validation on test set
     results = model.val(
@@ -190,8 +264,9 @@ def visualize_predictions_on_masks(
     logger.info(f"Output directory: {output_dir}")
     logger.info("="*60)
     
-    # Load model
+    # Load model and register grayscale conversion callbacks
     model = YOLO(model_path)
+    _register_grayscale_callbacks(model)
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -246,54 +321,74 @@ def visualize_predictions_on_masks(
             
             img_height, img_width = mask.shape[:2]
             
-            # Run inference on test image
+            # Read test image and convert to 3-channel for inference
+            test_img = read_tif(str(img_path))
+            if test_img.ndim == 2:
+                # Grayscale: (H, W) -> (H, W, 3)
+                test_img_3ch = np.stack([test_img] * 3, axis=-1)
+            elif test_img.ndim == 3 and test_img.shape[2] == 1:
+                # Single channel: (H, W, 1) -> (H, W, 3)
+                test_img_3ch = np.repeat(test_img, 3, axis=2)
+            else:
+                test_img_3ch = test_img
+            
+            # Run inference on 3-channel image
             results = model.predict(
-                source=str(img_path),
+                source=test_img_3ch,
                 imgsz=imgsz,
                 device=device,
                 conf=conf,
                 verbose=False,
             )
             
-            # Draw predicted boxes on mask
+            # If no detection found, retry with very low confidence to ensure at least one box
+            boxes_found = results and len(results) > 0 and results[0].boxes is not None and len(results[0].boxes) > 0
+            if not boxes_found:
+                results = model.predict(
+                    source=test_img_3ch,
+                    imgsz=imgsz,
+                    device=device,
+                    conf=0.01,  # Very low threshold to get at least one detection
+                    verbose=False,
+                )
+            
+            # Draw best predicted box on mask (highest confidence only)
             result_image = mask_3ch.copy()
             
             if results and len(results) > 0:
                 result = results[0]
                 if result.boxes is not None and len(result.boxes) > 0:
-                    for box in result.boxes:
-                        # Get box coordinates in pixel format (already in original image coordinates)
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                        
-                        # YOLOv8 returns coordinates in original image space, but we need to
-                        # map them to mask image space. The test image and mask might have different sizes.
-                        # Get original test image dimensions
-                        test_img = read_tif(str(img_path))
-                        test_height, test_width = test_img.shape[:2]
-                        
-                        # Scale coordinates from test image to mask image
-                        if test_height != img_height or test_width != img_width:
-                            scale_x = img_width / test_width
-                            scale_y = img_height / test_height
-                            x1 = int(x1 * scale_x)
-                            y1 = int(y1 * scale_y)
-                            x2 = int(x2 * scale_x)
-                            y2 = int(y2 * scale_y)
-                        
-                        # Clip to image bounds
-                        x1 = max(0, min(img_width - 1, x1))
-                        y1 = max(0, min(img_height - 1, y1))
-                        x2 = max(1, min(img_width, x2))
-                        y2 = max(1, min(img_height, y2))
-                        
-                        if x2 > x1 and y2 > y1:
-                            result_image = draw_box_on_image(
-                                result_image,
-                                (x1, y1, x2, y2),
-                                color=box_color,
-                                thickness=box_thickness,
-                            )
+                    # Get the box with highest confidence
+                    best_idx = result.boxes.conf.argmax()
+                    box = result.boxes[best_idx]
+                    
+                    # Get box coordinates in pixel format
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    
+                    # Scale coordinates from test image to mask image if sizes differ
+                    test_height, test_width = test_img.shape[:2]
+                    if test_height != img_height or test_width != img_width:
+                        scale_x = img_width / test_width
+                        scale_y = img_height / test_height
+                        x1 = int(x1 * scale_x)
+                        y1 = int(y1 * scale_y)
+                        x2 = int(x2 * scale_x)
+                        y2 = int(y2 * scale_y)
+                    
+                    # Clip to image bounds
+                    x1 = max(0, min(img_width - 1, x1))
+                    y1 = max(0, min(img_height - 1, y1))
+                    x2 = max(1, min(img_width, x2))
+                    y2 = max(1, min(img_height, y2))
+                    
+                    if x2 > x1 and y2 > y1:
+                        result_image = draw_box_on_image(
+                            result_image,
+                            (x1, y1, x2, y2),
+                            color=box_color,
+                            thickness=box_thickness,
+                        )
             
             # Save visualization
             output_path = Path(output_dir) / f"{base_name}_prediction.png"
@@ -327,7 +422,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        required=True,
+        default="src/yolo/weights/best.pt",
         help="Path to trained YOLOv8 model (.pt file)"
     )
     parser.add_argument(
@@ -440,5 +535,62 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    sys.exit(main())
-
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Path to best model (stored in src/yolo/weights)
+    MODEL_PATH = "src/yolo/weights/best.pt"
+    
+    # Check if model exists
+    if not Path(MODEL_PATH).exists():
+        print(f"Model not found at {MODEL_PATH}")
+        print("Please ensure best.pt is in src/yolo/weights/")
+        sys.exit(1)
+    
+    print(f"\n{'='*60}")
+    print("YOLOv8 Test Script")
+    print(f"{'='*60}")
+    print(f"Model: {MODEL_PATH}")
+    print(f"{'='*60}\n")
+    
+    # Run evaluation on test set
+    try:
+        metrics = evaluate_model(
+            model_path=MODEL_PATH,
+            data_yaml="src/yolo/dataset/data.yaml",
+            imgsz=384,
+            device="cuda:0",
+            conf=0.25,
+            iou=0.45,
+        )
+        
+        print("\n" + "="*60)
+        print("Final Evaluation Metrics:")
+        print("="*60)
+        for key, value in metrics.items():
+            print(f"  {key}: {value:.4f}")
+        print("="*60)
+        
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}", exc_info=True)
+        sys.exit(1)
+    
+    # Optional: Generate visualizations (uncomment if needed)
+    try:
+        stats = visualize_predictions_on_masks(
+            model_path=MODEL_PATH,
+            test_images_dir="src/yolo/dataset/images/test",
+            mask_dir="train",
+            output_dir="test_predictions",
+            imgsz=384,
+            device="cuda:0",
+            conf=0.25,
+        )
+        print(f"\nVisualization: {stats['processed']} processed, {stats['skipped']} skipped")
+    except Exception as e:
+        logger.error(f"Visualization failed: {e}", exc_info=True)
+    
+    print("\nTest complete!")
