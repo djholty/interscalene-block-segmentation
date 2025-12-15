@@ -49,7 +49,6 @@ Thumbs.db
 *.ipynb
 
 # Checkpoints (large files)
-*.pt
 *.pth
 *.ckpt
 
@@ -62,3 +61,14 @@ temp/
 test/
 test_*.tif
 
+data_brachial_plexus/
+output/
+src/yolo/dataset/
+train/
+test_predictions/
+*.jpg
+*.png
+*.yaml
+yolo11n.pt
+yolov8n.pt
+runs/
