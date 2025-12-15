@@ -9,6 +9,7 @@ This module provides:
 
 import os
 import argparse
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -236,7 +237,7 @@ def visualize_predictions_on_masks(
     box_color: Tuple[int, int, int] = (255, 0, 0),
     box_thickness: int = 3,
     mask_suffix: str = "_mask",
-) -> Dict[str, int]:
+) -> Dict[str, any]:
     """
     Run inference on test images and draw predicted boxes on corresponding mask images.
     
@@ -253,7 +254,7 @@ def visualize_predictions_on_masks(
         mask_suffix: Suffix to identify mask files (e.g., "_mask")
         
     Returns:
-        Dictionary with statistics (processed, skipped, errors)
+        Dictionary with statistics (processed, skipped, errors, latency info)
     """
     logger.info("="*60)
     logger.info("Visualizing Predictions on Mask Images")
@@ -268,8 +269,10 @@ def visualize_predictions_on_masks(
     model = YOLO(model_path)
     _register_grayscale_callbacks(model)
     
-    # Create output directory
+    # Create output directory and text outputs directory
     os.makedirs(output_dir, exist_ok=True)
+    text_output_dir = Path(output_dir) / "prediction_texts"
+    os.makedirs(text_output_dir, exist_ok=True)
     
     # Get test images
     test_images_path = Path(test_images_dir)
@@ -277,9 +280,10 @@ def visualize_predictions_on_masks(
     
     if not test_image_files:
         logger.warning(f"No .tif images found in {test_images_dir}")
-        return {'processed': 0, 'skipped': 0, 'errors': 0}
+        return {'processed': 0, 'skipped': 0, 'errors': 0, 'latency_ms': []}
     
     stats = {'processed': 0, 'skipped': 0, 'errors': 0}
+    inference_times = []  # List to store inference times in milliseconds
     mask_dir_path = Path(mask_dir)
     
     for img_path in test_image_files:
@@ -332,7 +336,8 @@ def visualize_predictions_on_masks(
             else:
                 test_img_3ch = test_img
             
-            # Run inference on 3-channel image
+            # Run inference on 3-channel image with timing
+            start_time = time.perf_counter()
             results = model.predict(
                 source=test_img_3ch,
                 imgsz=imgsz,
@@ -340,10 +345,14 @@ def visualize_predictions_on_masks(
                 conf=conf,
                 verbose=False,
             )
+            end_time = time.perf_counter()
+            inference_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+            inference_times.append(inference_time_ms)
             
             # If no detection found, retry with very low confidence to ensure at least one box
             boxes_found = results and len(results) > 0 and results[0].boxes is not None and len(results[0].boxes) > 0
             if not boxes_found:
+                start_time = time.perf_counter()
                 results = model.predict(
                     source=test_img_3ch,
                     imgsz=imgsz,
@@ -351,9 +360,22 @@ def visualize_predictions_on_masks(
                     conf=0.01,  # Very low threshold to get at least one detection
                     verbose=False,
                 )
+                end_time = time.perf_counter()
+                # Update timing for retry
+                inference_times[-1] = (end_time - start_time) * 1000
             
             # Draw best predicted box on mask (highest confidence only)
             result_image = mask_3ch.copy()
+            
+            # Initialize prediction info for text file
+            pred_info = {
+                'image_name': base_name,
+                'inference_time_ms': inference_time_ms,
+                'detection_found': False,
+                'confidence': 0.0,
+                'bbox_original': None,
+                'bbox_scaled': None,
+            }
             
             if results and len(results) > 0:
                 result = results[0]
@@ -361,10 +383,16 @@ def visualize_predictions_on_masks(
                     # Get the box with highest confidence
                     best_idx = result.boxes.conf.argmax()
                     box = result.boxes[best_idx]
+                    confidence = float(box.conf[0].cpu().numpy())
                     
                     # Get box coordinates in pixel format
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    x1_orig, y1_orig, x2_orig, y2_orig = int(x1), int(y1), int(x2), int(y2)
+                    x1, y1, x2, y2 = x1_orig, y1_orig, x2_orig, y2_orig
+                    
+                    pred_info['detection_found'] = True
+                    pred_info['confidence'] = confidence
+                    pred_info['bbox_original'] = (x1_orig, y1_orig, x2_orig, y2_orig)
                     
                     # Scale coordinates from test image to mask image if sizes differ
                     test_height, test_width = test_img.shape[:2]
@@ -382,6 +410,8 @@ def visualize_predictions_on_masks(
                     x2 = max(1, min(img_width, x2))
                     y2 = max(1, min(img_height, y2))
                     
+                    pred_info['bbox_scaled'] = (x1, y1, x2, y2)
+                    
                     if x2 > x1 and y2 > y1:
                         result_image = draw_box_on_image(
                             result_image,
@@ -393,6 +423,20 @@ def visualize_predictions_on_masks(
             # Save visualization
             output_path = Path(output_dir) / f"{base_name}_prediction.png"
             Image.fromarray(result_image).save(output_path)
+            
+            # Save prediction info to text file
+            text_output_path = text_output_dir / f"{base_name}_prediction.txt"
+            with open(text_output_path, 'w') as f:
+                f.write(f"Image: {base_name}\n")
+                f.write(f"Inference Time: {pred_info['inference_time_ms']:.2f} ms\n")
+                f.write(f"Detection Found: {pred_info['detection_found']}\n")
+                f.write(f"Confidence: {pred_info['confidence']:.4f}\n")
+                if pred_info['bbox_original']:
+                    f.write(f"Bounding Box (original): {pred_info['bbox_original']}\n")
+                if pred_info['bbox_scaled']:
+                    f.write(f"Bounding Box (scaled): {pred_info['bbox_scaled']}\n")
+                f.write(f"Image Dimensions: {img_width}x{img_height}\n")
+            
             stats['processed'] += 1
             
             if stats['processed'] % 10 == 0:
@@ -402,6 +446,16 @@ def visualize_predictions_on_masks(
             logger.error(f"Error processing {img_path}: {e}", exc_info=True)
             stats['errors'] += 1
     
+    # Calculate latency statistics
+    latency_stats = {}
+    if inference_times:
+        latency_stats = {
+            'min_ms': min(inference_times),
+            'max_ms': max(inference_times),
+            'avg_ms': sum(inference_times) / len(inference_times),
+            'total_inferences': len(inference_times),
+        }
+    
     logger.info("\n" + "="*60)
     logger.info("Visualization Complete")
     logger.info("="*60)
@@ -409,8 +463,49 @@ def visualize_predictions_on_masks(
     logger.info(f"Skipped: {stats['skipped']}")
     logger.info(f"Errors: {stats['errors']}")
     logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Text outputs: {text_output_dir}")
+    
+    if latency_stats:
+        logger.info("-"*60)
+        logger.info("Inference Latency Statistics:")
+        logger.info(f"  Min latency: {latency_stats['min_ms']:.2f} ms")
+        logger.info(f"  Max latency: {latency_stats['max_ms']:.2f} ms")
+        logger.info(f"  Avg latency: {latency_stats['avg_ms']:.2f} ms")
+        logger.info(f"  Total inferences: {latency_stats['total_inferences']}")
+        logger.info(f"  Approx FPS: {1000 / latency_stats['avg_ms']:.2f}")
     logger.info("="*60)
     
+    # Save latency summary to text file
+    latency_summary_path = Path(output_dir) / "latency_summary.txt"
+    with open(latency_summary_path, 'w') as f:
+        f.write("="*60 + "\n")
+        f.write("Inference Latency Summary\n")
+        f.write("="*60 + "\n")
+        f.write(f"Model: {model_path}\n")
+        f.write(f"Image Size: {imgsz}x{imgsz}\n")
+        f.write(f"Device: {device}\n")
+        f.write(f"Confidence Threshold: {conf}\n")
+        f.write("-"*60 + "\n")
+        if latency_stats:
+            f.write(f"Min Latency: {latency_stats['min_ms']:.2f} ms\n")
+            f.write(f"Max Latency: {latency_stats['max_ms']:.2f} ms\n")
+            f.write(f"Avg Latency: {latency_stats['avg_ms']:.2f} ms\n")
+            f.write(f"Total Inferences: {latency_stats['total_inferences']}\n")
+            f.write(f"Approx FPS: {1000 / latency_stats['avg_ms']:.2f}\n")
+        f.write("-"*60 + "\n")
+        f.write(f"Processed: {stats['processed']}\n")
+        f.write(f"Skipped: {stats['skipped']}\n")
+        f.write(f"Errors: {stats['errors']}\n")
+        f.write("="*60 + "\n")
+        f.write("\nPer-Image Latencies (ms):\n")
+        for i, t in enumerate(inference_times):
+            f.write(f"  Image {i+1}: {t:.2f} ms\n")
+    
+    logger.info(f"Latency summary saved to: {latency_summary_path}")
+    
+    # Return stats with latency info
+    stats['latency_stats'] = latency_stats
+    stats['inference_times'] = inference_times
     return stats
 
 
@@ -524,8 +619,18 @@ def main():
                 conf=args.conf,
             )
             print("\nVisualization Statistics:")
-            for key, value in stats.items():
-                print(f"  {key}: {value}")
+            print(f"  processed: {stats['processed']}")
+            print(f"  skipped: {stats['skipped']}")
+            print(f"  errors: {stats['errors']}")
+            
+            # Print latency statistics
+            if 'latency_stats' in stats and stats['latency_stats']:
+                lat = stats['latency_stats']
+                print("\nInference Latency:")
+                print(f"  Min: {lat['min_ms']:.2f} ms")
+                print(f"  Max: {lat['max_ms']:.2f} ms")
+                print(f"  Avg: {lat['avg_ms']:.2f} ms")
+                print(f"  FPS: {1000 / lat['avg_ms']:.2f}")
         except Exception as e:
             logger.error(f"Visualization failed: {e}", exc_info=True)
             return 1
@@ -590,6 +695,19 @@ if __name__ == "__main__":
             conf=0.25,
         )
         print(f"\nVisualization: {stats['processed']} processed, {stats['skipped']} skipped")
+        
+        # Print latency statistics
+        if 'latency_stats' in stats and stats['latency_stats']:
+            lat = stats['latency_stats']
+            print("\n" + "="*60)
+            print("Inference Latency Summary:")
+            print("="*60)
+            print(f"  Min latency: {lat['min_ms']:.2f} ms")
+            print(f"  Max latency: {lat['max_ms']:.2f} ms")
+            print(f"  Avg latency: {lat['avg_ms']:.2f} ms")
+            print(f"  Approx FPS: {1000 / lat['avg_ms']:.2f}")
+            print("="*60)
+            
     except Exception as e:
         logger.error(f"Visualization failed: {e}", exc_info=True)
     
