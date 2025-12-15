@@ -62,3 +62,7 @@ temp/
 test/
 test_*.tif
 
+data_brachial_plexus/
+output/
+src/yolo/dataset/
+
