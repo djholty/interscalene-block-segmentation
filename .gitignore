@@ -68,6 +68,8 @@ train/
 test_predictions/
 *.jpg
 *.png
+# Allow images in assets directory for README
+!assets/images/*.png
 *.yaml
 yolo11n.pt
 yolov8n.pt
