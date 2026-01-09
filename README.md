@@ -2,6 +2,10 @@
 
 A modular pipeline for processing medical images and videos with MedSAM2 for interscalene block segmentation.
 
+![Example Segmentation](assets/images/Screenshot 2026-01-09 at 10.47.43 AM.png)
+
+*Example of YOLOv8 bounding box detection on a DICOM slice*
+
 ## Features
 
 - **Multiple Input Formats**: MP4/AVI/MOV videos, DICOM medical images, TIF/TIFF images
